@@ -1,10 +1,30 @@
 # ABImorph - Morph ABI Specification & Binary Distribution
 
-**Version:** 1.1.0
+**Version:** 1.1.0-final
 **Release Date:** 2026-01-22
-**Status:** STABLE
+**Status:** STABLE (with significant limitations)
 
 Official ABI specification, binary distribution, and standard library for the Morph programming ecosystem.
+
+---
+
+## ⚠️ IMPORTANT WARNINGS
+
+### 🔴 **NOT READY FOR PRODUCTION USE**
+
+Current binary has **critical limitations**:
+- ❌ **NO operand encoding** - cannot specify registers (rax, rbx, etc.)
+- ❌ **NO immediate values** - cannot use constants (42, 0xFF, etc.)
+- ❌ **NO memory addressing** - cannot access memory ([rax+8], etc.)
+- ❌ **morphlib CANNOT BE COMPILED** - uses unsupported high-level syntax
+
+**What this means:** Generated code has **undefined behavior**. Only useful for education/research.
+
+**Read:** [LIMITATIONS.md](LIMITATIONS.md) for complete details.
+
+**Wait for:** v2.0.0 for usable compiler (see [ROADMAP.md](ROADMAP.md))
+
+---
 
 ## Overview
 
