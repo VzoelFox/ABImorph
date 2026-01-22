@@ -1,0 +1,4 @@
+bin/morph-bootstrap
+bin/fasm
+*.o
+*.log

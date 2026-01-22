@@ -1,0 +1,7 @@
+VZOELFOX
+; Simple test for the bootstrap compiler
+; This uses features the current binary lacks: operands!
+
+mov.r64.imm64 rax 60     ; sys_exit
+mov.r64.imm64 rdi 42     ; return code 42
+syscall
