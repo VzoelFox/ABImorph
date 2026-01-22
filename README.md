@@ -1,18 +1,19 @@
 # ABImorph - Morph ABI Specification & Binary Distribution
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Release Date:** 2026-01-22
 **Status:** STABLE
 
-Official ABI specification and binary distribution for the Morph programming ecosystem.
+Official ABI specification, binary distribution, and standard library for the Morph programming ecosystem.
 
 ## Overview
 
 ABImorph provides:
-- **Binary Distribution** - Ready-to-use `morph` compiler
+- **Binary Distribution** - Ready-to-use `morph` compiler (v1.1.0)
 - **ABI Specification** - Complete calling convention and binary format
 - **ISA Reference** - Full instruction set architecture documentation
-- **Standard Library** - Core functions for Morph development
+- **Standard Library (morphlib)** - Memory, runtime, I/O, and data structures
+- **Documentation** - Complete guides for development
 
 ## Quick Start
 
@@ -254,6 +255,41 @@ Binary is standalone ELF64 - no dependencies required.
 ./program  # Just run it
 ```
 
+## morphlib - Standard Library
+
+**Location:** `morphlib/`
+
+Complete standard library written in `.fox` for high-level development:
+
+### Memory Management
+- **alloc.fox** - Heap allocator with arena support
+- **buffer.fox** - Dynamic buffer management
+
+### Runtime & Concurrency
+- **morphroutine.fox** - Runtime hierarchy (Unit/Shard/Fragment)
+- **daemon.fox** - Circuit breaker and memory monitoring
+- **signal.fox** - Signal handling
+
+### Data Structures
+- **hashmap.fox** - Hash table implementation
+- **string.fox** - String operations
+- **string_ext.fox** - Extended string utilities
+
+### I/O & System
+- **io.fox** - File I/O operations
+- **sys.fox** - System call wrappers
+- **jaringan.fox** - Network operations
+
+### Utilities
+- **aritmatika.fox** - Arithmetic helpers
+- **logika.fox** - Logic utilities
+- **float.fox** - Floating point operations
+- **sensor.fox** - Monitoring utilities
+- **metrik.fox** - Metrics collection
+- **snapshot.fox** - Memory snapshots
+
+All libraries use high-level `.fox` syntax (fungsi/tutup_fungsi, jika/tutup_jika) and compile to native code via `morph`.
+
 ## Philosophy: Code Honesty
 
 **Transparent:** Every instruction is explicit
@@ -262,6 +298,12 @@ Binary is standalone ELF64 - no dependencies required.
 **Native:** Direct machine code generation
 
 ## Version History
+
+**v1.1.0 (2026-01-22)** - Bug Fix & Library Release
+- Fixed: seer.print.int segfault (now uses hex output)
+- Added: morphlib standard library (19 modules)
+- Improved: Binary stability and error handling
+- Note: Non-critical segfault on compile mode exit (binary created successfully)
 
 **v1.0.0 (2026-01-22)** - Initial ABI Release
 - Binary distribution: morph compiler

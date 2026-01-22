@@ -1,0 +1,19 @@
+Unit: MorphLib
+
+Ambil aritmatika.fox
+Ambil logika.fox
+Ambil sys.fox
+Ambil alloc.fox
+; Ambil signal.fox  ; FROZEN - Enable setelah self-host parser
+Ambil snapshot.fox
+Ambil daemon.fox
+Ambil morphroutine.fox
+Ambil io.fox
+Ambil string.fox
+Ambil hashmap.fox
+Ambil jaringan.fox
+Ambil buffer.fox
+Ambil string_ext.fox
+Ambil float.fox
+Ambil metrik.fox
+Ambil sensor.fox

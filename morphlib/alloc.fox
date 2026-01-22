@@ -1,0 +1,237 @@
+; Memory Allocator (Heap)
+; [AI_HINT: Mengelola memori dinamis menggunakan r15 sebagai Heap Root]
+
+; Header Structure (32 bytes)
+; [0-7]   Size (Payload size)
+; [8-15]  Status (1=Used, 0=Free)
+; [16-23] Magic Number (Verification) - Value: 28062004
+; [24-31] Padding
+
+fungsi heap_init
+    ; Initialize Heap Root (r15)
+    mov rdi, 0
+    call sys_brk
+    mov r15, rax
+    ret
+tutup_fungsi
+
+fungsi mem_check_magic
+    ; Input: rdi (Header Ptr)
+    ; Output: None (Crashes if invalid)
+
+    ; Check Magic at [rdi+16]
+    mov r10, rdi
+    add r10, 16
+    mov rax, [r10]
+
+    ; Magic: 28062004
+    mov rdx, 28062004
+    cmp rax, rdx
+    jika_beda
+        ; HEAP CORRUPTION DETECTED
+        ; Write error to stderr (2)
+        ; We can't use printmorph easily without stack mess, just hard fail with syscall
+        mov rdi, 666 ; Error Code 666
+        call sys_exit
+    tutup_jika
+    ret
+tutup_fungsi
+
+fungsi mem_alloc
+    ; Input: rdi (size)
+    ; Output: rax (ptr to payload)
+
+    push rbx
+
+    ; 1. Align size to 16 bytes (val + 15) & ~15
+    add rdi, 15
+    and rdi, -16
+
+    ; Save requested size in rsi
+    mov rsi, rdi
+
+    ; 2. Get Current Break
+    mov rdi, 0
+    call sys_brk
+    mov rbx, rax ; rbx = End of Heap
+
+    ; 3. Traverse (Start from r15)
+    mov r8, r15 ; r8 = Current Block Ptr
+
+    loop search_loop
+        ; Check if we reached end
+        cmp r8, rbx
+        jika_sama
+            henti ; Break loop -> Allocate new
+        tutup_jika
+        jika_diatas
+            henti ; Safety break
+        tutup_jika
+
+        ; Verify Magic Number before reading size
+        push rdi
+        mov rdi, r8
+        call mem_check_magic
+        pop rdi
+
+        ; Read Header
+        ; [r8] is Size
+        mov rcx, [r8]
+
+        ; [r8+8] is Status
+        mov r9, r8
+        add r9, 8
+        mov rdx, [r9]
+
+        ; Check if Free (Status == 0)
+        cmp rdx, 0
+        jika_sama
+             ; Check Size >= Requested (rsi)
+             cmp rcx, rsi
+             jika_diatas_sama
+                 ; Found fit! Reuse block.
+                 ; Mark Used (Status=1 at r8+8)
+                 mov r11, 1
+                 mov r10, r8
+                 add r10, 8
+                 mov [r10], r11
+
+                 ; Return Payload Ptr (r8 + 32)
+                 mov rax, r8
+                 add rax, 32
+                 pop rbx
+                 ret
+             tutup_jika
+        tutup_jika
+
+        ; Next Block = r8 + 32 + Size
+        add r8, 32
+        add r8, rcx
+    tutup_loop
+
+    ; 4. Allocate New Block (Extend Heap)
+    ; rbx is Current Break.
+
+    ; Calculate New Break = rbx + 32 + rsi
+    mov rdi, rbx
+    add rdi, 32
+    add rdi, rsi
+
+    call sys_brk
+    ; rbx is still pointer to the new block start
+
+    ; Setup Header at rbx
+    ; [rbx] = Size (rsi)
+    mov [rbx], rsi
+
+    ; [rbx+8] = Status (1)
+    mov r11, 1
+    mov r10, rbx
+    add r10, 8
+    mov [r10], r11
+
+    ; [rbx+16] = Magic (28062004)
+    mov r11, 28062004
+    mov r10, rbx
+    add r10, 16
+    mov [r10], r11
+
+    ; Return Payload (rbx + 32)
+    mov rax, rbx
+    add rax, 32
+    pop rbx
+    ret
+tutup_fungsi
+
+fungsi mem_realloc
+    ; Input: rdi (ptr), rsi (new_size)
+    ; Output: rax (new_ptr)
+
+    ; If ptr is 0, behave like malloc
+    cmp rdi, 0
+    jika_nol
+        mov rdi, rsi
+        call mem_alloc
+        ret
+    tutup_jika
+
+    ; If size is 0, behave like free
+    cmp rsi, 0
+    jika_nol
+        call mem_free
+        mov rax, 0
+        ret
+    tutup_jika
+
+    ; Calculate old size from header (ptr - 32)
+    ; Header: [0-7]=Size
+    mov rdx, rdi
+    sub rdx, 32
+
+    mov rcx, [rdx] ; Size is at offset 0
+
+    ; Determine copy size (min(old_size, new_size))
+    cmp rcx, rsi
+    cmova rcx, rsi ; if old > new, copy new. else copy old.
+
+    ; Alloc new block
+    push rdi ; Save old ptr
+    push rcx ; Save copy size
+    push rsi ; Save new size
+
+    mov rdi, rsi
+    call mem_alloc
+
+    ; Stack: [rsi(new), rcx(copy), rdi(old), ret]
+    ; Recover for copy
+    pop rsi ; ignore new size
+    pop rcx ; copy size
+    pop rsi ; old ptr (into rsi for movs)
+
+    ; Check alloc success
+    cmp rax, 0
+    jika_nol
+        ; Failed. Return 0. Old block untouched.
+        ret
+    tutup_jika
+
+    ; Copy data: dest(rdi)=rax, src(rsi)=old_ptr, len(rcx)=copy_size
+    push rsi ; Save old ptr for free (rsi is modified by rep movsb)
+
+    push rax ; Save new ptr
+    mov rdi, rax
+    ; rsi is already old ptr
+    ; rcx is already copy size
+    cld
+    rep
+    movsb
+
+    ; Free old ptr
+    pop rax ; Restore new ptr
+    pop rdi ; Restore old ptr (into rdi for free)
+
+    push rax ; Save new ptr for return
+    call mem_free
+    pop rax ; Return new ptr
+    ret
+tutup_fungsi
+
+fungsi mem_free
+    ; Input: rdi (ptr to payload)
+
+    ; Calculate Header Ptr (rdi - 32)
+    sub rdi, 32
+
+    ; Verify Magic
+    push rdi
+    call mem_check_magic
+    pop rdi
+
+    ; Mark Status = 0 (at rdi+8)
+    mov r11, 0
+    mov r10, rdi
+    add r10, 8
+    mov [r10], r11
+
+    ret
+tutup_fungsi

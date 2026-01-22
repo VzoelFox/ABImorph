@@ -1,0 +1,1099 @@
+; Morph Signal Library - Kernel-Level Debug untuk AI
+; [AI_HINT: Menangkap signal dari kernel dan menampilkan state lengkap untuk debugging]
+;
+; Filosofi: AI perlu tahu MENGAPA program crash, bukan hanya BAHWA program crash.
+; libc hanya bilang "Segmentation fault" - tidak berguna untuk AI.
+; Kita tangkap signal, baca register state, decode instruksi, tampilkan dengan AI_HINT.
+
+; ============================================================================
+; SIGNAL CONSTANTS (dari kernel)
+; ============================================================================
+
+const SIGHUP    1
+const SIGINT    2
+const SIGQUIT   3
+const SIGILL    4      ; Illegal instruction
+const SIGTRAP   5      ; Breakpoint/trace trap
+const SIGABRT   6      ; Abort
+const SIGBUS    7      ; Bus error (bad memory access)
+const SIGFPE    8      ; Floating point exception
+const SIGKILL   9      ; Kill (cannot be caught)
+const SIGUSR1   10
+const SIGSEGV   11     ; Segmentation violation
+const SIGUSR2   12
+const SIGPIPE   13
+const SIGALRM   14
+const SIGTERM   15
+
+; sigaction flags
+const SA_SIGINFO    4          ; Use sa_sigaction instead of sa_handler
+const SA_RESTORER   0x04000000 ; Provide restorer function
+const SA_RESTART    0x10000000
+
+; Signal codes (si_code) untuk SIGSEGV
+const SEGV_MAPERR   1   ; Address not mapped to object
+const SEGV_ACCERR   2   ; Invalid permissions for mapped object
+
+; Signal codes untuk SIGFPE
+const FPE_INTDIV    1   ; Integer divide by zero
+const FPE_INTOVF    2   ; Integer overflow
+const FPE_FLTDIV    3   ; Floating point divide by zero
+const FPE_FLTOVF    4   ; Floating point overflow
+const FPE_FLTUND    5   ; Floating point underflow
+const FPE_FLTRES    6   ; Floating point inexact result
+const FPE_FLTINV    7   ; Invalid floating point operation
+
+; Signal codes untuk SIGILL
+const ILL_ILLOPC    1   ; Illegal opcode
+const ILL_ILLOPN    2   ; Illegal operand
+const ILL_ILLADR    3   ; Illegal addressing mode
+const ILL_ILLTRP    4   ; Illegal trap
+const ILL_PRVOPC    5   ; Privileged opcode
+const ILL_PRVREG    6   ; Privileged register
+const ILL_COPROC    7   ; Coprocessor error
+
+; ============================================================================
+; STRUKTUR DATA (sesuai kernel x86_64)
+; ============================================================================
+
+; sigset_t: 128 bytes (1024 bits untuk signals)
+struktur SigSet
+    prop bits_0 8
+    prop bits_1 8
+    prop bits_2 8
+    prop bits_3 8
+    prop bits_4 8
+    prop bits_5 8
+    prop bits_6 8
+    prop bits_7 8
+    prop bits_8 8
+    prop bits_9 8
+    prop bits_10 8
+    prop bits_11 8
+    prop bits_12 8
+    prop bits_13 8
+    prop bits_14 8
+    prop bits_15 8
+tutup_struktur
+
+; siginfo_t structure (minimal, 128 bytes)
+struktur SigInfo
+    prop si_signo 4     ; Signal number
+    prop si_errno 4     ; Errno value
+    prop si_code 4      ; Signal code
+    prop pad0 4         ; Padding
+    prop si_addr 8      ; Faulting address (untuk SIGSEGV/SIGBUS)
+    prop reserved 104   ; Rest of siginfo (total 128 bytes)
+tutup_struktur
+
+; sigaction structure untuk kernel (different dari glibc!)
+; Kernel expects: sa_handler, sa_flags, sa_restorer, sa_mask
+struktur KSigAction
+    prop sa_handler 8   ; Signal handler function pointer
+    prop sa_flags 8     ; Flags
+    prop sa_restorer 8  ; Restorer function (required dengan SA_RESTORER)
+    prop sa_mask 128    ; Signal mask (SigSet)
+tutup_struktur
+
+; ucontext mcontext gregset offsets (dari kernel)
+; Register offsets dalam gregset_t array
+const UREG_R8     0
+const UREG_R9     8
+const UREG_R10    16
+const UREG_R11    24
+const UREG_R12    32
+const UREG_R13    40
+const UREG_R14    48
+const UREG_R15    56
+const UREG_RDI    64
+const UREG_RSI    72
+const UREG_RBP    80
+const UREG_RBX    88
+const UREG_RDX    96
+const UREG_RAX    104
+const UREG_RCX    112
+const UREG_RSP    120
+const UREG_RIP    128
+const UREG_EFLAGS 136
+const UREG_CS     144
+const UREG_GS     152
+const UREG_FS     160
+const UREG_SS     176
+
+; ucontext_t offsets (simplified)
+; ucontext: [uc_flags:8][uc_link:8][uc_stack:24][uc_mcontext:...][uc_sigmask:128]
+; uc_mcontext starts at offset 40
+; gregset starts at uc_mcontext + 0
+const UCONTEXT_MCONTEXT_OFFSET 40
+const UCONTEXT_GREGS_OFFSET 40
+
+; ============================================================================
+; GLOBAL STATE
+; ============================================================================
+
+; Static buffer untuk signal handler (tidak bisa pakai heap dalam handler!)
+; 4KB buffer untuk output
+signal_output_buffer:
+    data "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+    data "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+    data "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+    data "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+    ; ... (simplified, real implementation needs more)
+
+signal_handler_installed:
+    data "\0\0\0\0\0\0\0\0"
+
+; ============================================================================
+; RESTORER (required by kernel)
+; ============================================================================
+
+fungsi signal_restorer
+    ; Kernel requires this to return from signal handler
+    ; Call sys_rt_sigreturn
+    mov rax, 15
+    syscall
+    ; Never returns
+tutup_fungsi
+
+; ============================================================================
+; SIGNAL HANDLER
+; ============================================================================
+
+fungsi morph_signal_handler
+    ; Called by kernel when signal occurs
+    ; Input (per sigaction SA_SIGINFO):
+    ;   rdi = signum
+    ;   rsi = siginfo_t*
+    ;   rdx = ucontext_t*
+    ;
+    ; CRITICAL: Cannot use heap allocation here!
+    ; Must use only stack and static buffers.
+
+    ; Save all registers we'll use
+    push rbx
+    push rcx
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+
+    ; Save args
+    mov r12, rdi    ; signum
+    mov r13, rsi    ; siginfo_t*
+    mov r14, rdx    ; ucontext_t*
+
+    ; === Print Header ===
+    ; "\n[MORPH_SIGNAL] "
+    mov rax, 0x4E47495320
+    push rax
+    mov rax, 0x4853505F4850524F
+    push rax
+    mov rax, 0x4D5B0A
+    push rax
+    mov rdi, 2          ; stderr
+    mov rsi, rsp
+    mov rdx, 19
+    mov rax, 1
+    syscall
+    add rsp, 24
+
+    ; === Print Signal Name ===
+    mov rdi, r12
+    call MorphLib_signal_print_name
+
+    ; === Print Newline ===
+    mov rax, 0x0A
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rax
+
+    ; === Print Signal Code Explanation ===
+    mov rdi, r12        ; signum
+    mov rsi, r13        ; siginfo_t*
+    call MorphLib_signal_print_code
+
+    ; === Print Faulting Address (if applicable) ===
+    cmp r12, MorphLib_SIGSEGV
+    jika_sama
+        call MorphLib_signal_print_fault_addr
+    tutup_jika
+    cmp r12, MorphLib_SIGBUS
+    jika_sama
+        call MorphLib_signal_print_fault_addr
+    tutup_jika
+
+    ; === Print Register State ===
+    mov rdi, r14        ; ucontext_t*
+    call MorphLib_signal_print_registers
+
+    ; === Print Instruction at RIP ===
+    mov rdi, r14
+    call MorphLib_signal_print_instruction
+
+    ; === Print AI Hint ===
+    mov rdi, r12        ; signum
+    mov rsi, r13        ; siginfo
+    mov rdx, r14        ; ucontext
+    call MorphLib_signal_print_ai_hint
+
+    ; Restore registers
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rcx
+    pop rbx
+
+    ; Exit dengan error code = signal number
+    mov rdi, r12
+    add rdi, 128        ; Exit code 128+signum (shell convention)
+    mov rax, 60
+    syscall
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print Signal Name
+; ============================================================================
+
+fungsi signal_print_name
+    ; Input: rdi = signum
+    ; Print human-readable signal name
+
+    cmp rdi, MorphLib_SIGSEGV
+    jika_sama
+        ; "SIGSEGV (Segmentation Fault)"
+        mov rax, 0x5645475345
+        push rax
+        mov rax, 0x47495320
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 7
+        mov rax, 1
+        syscall
+        add rsp, 16
+        ret
+    tutup_jika
+
+    cmp rdi, MorphLib_SIGFPE
+    jika_sama
+        ; "SIGFPE"
+        mov rax, 0x455046474953
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 6
+        mov rax, 1
+        syscall
+        add rsp, 8
+        ret
+    tutup_jika
+
+    cmp rdi, MorphLib_SIGILL
+    jika_sama
+        ; "SIGILL"
+        mov rax, 0x4C4C49474953
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 6
+        mov rax, 1
+        syscall
+        add rsp, 8
+        ret
+    tutup_jika
+
+    cmp rdi, MorphLib_SIGBUS
+    jika_sama
+        ; "SIGBUS"
+        mov rax, 0x535542474953
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 6
+        mov rax, 1
+        syscall
+        add rsp, 8
+        ret
+    tutup_jika
+
+    cmp rdi, MorphLib_SIGABRT
+    jika_sama
+        ; "SIGABRT"
+        mov rax, 0x54524241474953
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 7
+        mov rax, 1
+        syscall
+        add rsp, 8
+        ret
+    tutup_jika
+
+    ; Default: "SIGNAL_"
+    mov rax, 0x5F4C414E474953
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 7
+    mov rax, 1
+    syscall
+    add rsp, 8
+
+    ; TODO: Print number
+    ret
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print Signal Code
+; ============================================================================
+
+fungsi signal_print_code
+    ; Input: rdi = signum, rsi = siginfo_t*
+
+    push rbx
+    mov rbx, rsi
+
+    ; Get si_code (offset 8 in siginfo, 4 bytes)
+    add rbx, 8
+    mov rax, [rbx]
+    and rax, 0xFFFFFFFF
+
+    ; "  Code: "
+    mov rcx, 0x203A65646F4320
+    push rcx
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 8
+    push rax
+    mov rax, 1
+    syscall
+    pop rax
+    add rsp, 8
+
+    ; Print code number
+    mov rdi, rax
+    call MorphLib_signal_print_num
+
+    ; Newline
+    mov rax, 0x0A
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rax
+
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print Fault Address
+; ============================================================================
+
+fungsi signal_print_fault_addr
+    ; Uses r13 (siginfo_t* from parent)
+
+    ; "  Addr: 0x"
+    mov rax, 0x7830203A7264
+    push rax
+    mov rax, 0x6441202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 12
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    ; Get si_addr (offset 16 in siginfo_t)
+    mov rbx, r13
+    add rbx, 16
+    mov rdi, [rbx]
+
+    call MorphLib_signal_print_hex
+
+    ; Newline
+    mov rax, 0x0A
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rax
+
+    ret
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print Registers
+; ============================================================================
+
+fungsi signal_print_registers
+    ; Input: rdi = ucontext_t*
+
+    push rbx
+    push r12
+    push r13
+
+    mov r12, rdi
+
+    ; Get gregset pointer (ucontext + 40)
+    add r12, MorphLib_UCONTEXT_GREGS_OFFSET
+
+    ; "  Registers:\n"
+    mov rax, 0x0A3A7372657473
+    push rax
+    mov rax, 0x6967655220
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 14
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    ; RAX
+    mov rax, 0x203D2058
+    push rax
+    mov rax, 0x415220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RAX
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RBX
+    mov rax, 0x203D2058
+    push rax
+    mov rax, 0x425220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RBX
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RCX
+    mov rax, 0x203D2058
+    push rax
+    mov rax, 0x435220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RCX
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RDX
+    mov rax, 0x203D2058
+    push rax
+    mov rax, 0x445220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RDX
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RSI
+    mov rax, 0x203D2049
+    push rax
+    mov rax, 0x535220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RSI
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RDI
+    mov rax, 0x203D2049
+    push rax
+    mov rax, 0x445220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RDI
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RSP
+    mov rax, 0x203D2050
+    push rax
+    mov rax, 0x535220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RSP
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RBP
+    mov rax, 0x203D2050
+    push rax
+    mov rax, 0x425220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RBP
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; RIP (Most important!)
+    mov rax, 0x203D2050
+    push rax
+    mov rax, 0x495220202020
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 10
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    mov rbx, r12
+    add rbx, MorphLib_UREG_RIP
+    mov rdi, [rbx]
+    call MorphLib_signal_print_hex
+    call MorphLib_signal_print_nl
+
+    ; R8-R15
+    ; TODO: Add remaining registers
+
+    pop r13
+    pop r12
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print Instruction at RIP
+; ============================================================================
+
+fungsi signal_print_instruction
+    ; Input: rdi = ucontext_t*
+    ; Read bytes at RIP and decode
+
+    push rbx
+    push r12
+    push r13
+
+    mov r12, rdi
+
+    ; Get RIP
+    add r12, MorphLib_UCONTEXT_GREGS_OFFSET
+    add r12, MorphLib_UREG_RIP
+    mov r13, [r12]      ; r13 = RIP value
+
+    ; "  Instruction bytes at RIP: "
+    mov rax, 0x203A5049
+    push rax
+    mov rax, 0x5220746120
+    push rax
+    mov rax, 0x7365747962206E
+    push rax
+    mov rax, 0x6F69746375727473
+    push rax
+    mov rax, 0x6E4920
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 30
+    mov rax, 1
+    syscall
+    add rsp, 40
+
+    ; Print first 8 bytes at RIP
+    mov rcx, 8
+    mov rbx, r13
+
+    loop print_instr_bytes
+        cmp rcx, 0
+        jika_sama
+            henti
+        tutup_jika
+
+        ; Read byte
+        movzx rdi, [rbx]
+
+        ; Print as hex (2 digits)
+        call MorphLib_signal_print_byte_hex
+
+        ; Space
+        mov rax, 0x20
+        push rax
+        push rcx
+        push rbx
+        mov rdi, 2
+        mov rsi, rsp
+        add rsi, 16
+        mov rdx, 1
+        mov rax, 1
+        syscall
+        pop rbx
+        pop rcx
+        pop rax
+
+        inc rbx
+        dec rcx
+    tutup_loop
+
+    call MorphLib_signal_print_nl
+
+    pop r13
+    pop r12
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; HELPER: Print AI Hint
+; ============================================================================
+
+fungsi signal_print_ai_hint
+    ; Input: rdi = signum, rsi = siginfo, rdx = ucontext
+
+    push rbx
+    mov rbx, rdi
+
+    ; "\n  [AI_HINT]: "
+    mov rax, 0x203A544E4948
+    push rax
+    mov rax, 0x5F49415B20200A
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 14
+    mov rax, 1
+    syscall
+    add rsp, 16
+
+    ; Print hint based on signal
+    cmp rbx, MorphLib_SIGSEGV
+    jika_sama
+        ; "Program mencoba mengakses memori yang tidak valid atau tidak dipetakan."
+        ; Simplified: "Akses memori invalid. Periksa pointer NULL atau out-of-bounds."
+        mov rax, 0x2E73646E
+        push rax
+        mov rax, 0x756F622D666F2D74
+        push rax
+        mov rax, 0x756F207561746120
+        push rax
+        mov rax, 0x4C4C554E20726574
+        push rax
+        mov rax, 0x6E696F7020617369
+        push rax
+        mov rax, 0x7265502E6469766E
+        push rax
+        mov rax, 0x6920697265646D20
+        push rax
+        mov rax, 0x736B6120
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 60
+        mov rax, 1
+        syscall
+        add rsp, 64
+        lompat ai_hint_done
+    tutup_jika
+
+    cmp rbx, MorphLib_SIGFPE
+    jika_sama
+        ; "Operasi aritmatika ilegal: pembagian dengan nol atau overflow."
+        mov rax, 0x2E776F6C6672
+        push rax
+        mov rax, 0x65766F20756174
+        push rax
+        mov rax, 0x6120
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 17
+        mov rax, 1
+        syscall
+        add rsp, 24
+        lompat ai_hint_done
+    tutup_jika
+
+    cmp rbx, MorphLib_SIGILL
+    jika_sama
+        ; "CPU menemukan instruksi yang tidak valid atau tidak dikenali."
+        mov rax, 0x2E696C617665
+        push rax
+        mov rax, 0x6E6920
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 13
+        mov rax, 1
+        syscall
+        add rsp, 16
+        lompat ai_hint_done
+    tutup_jika
+
+    ; Default
+    mov rax, 0x6E6B6E55
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 4
+    mov rax, 1
+    syscall
+    add rsp, 8
+
+    ai_hint_done:
+    call MorphLib_signal_print_nl
+    call MorphLib_signal_print_nl
+
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; UTILITY: Print Hex (full 64-bit)
+; ============================================================================
+
+fungsi signal_print_hex
+    ; Input: rdi = value
+    ; Print as 16-digit hex without leading 0x
+    ; Note: RCX is used for shift (CL is low byte), R8 for loop counter
+
+    push rbx
+    push rcx
+    push rdx
+    push r8
+
+    mov r8, 60          ; Loop counter/shift amount (starts at 60, goes down by 4)
+
+    loop sig_hex_loop
+        mov rbx, rdi    ; Copy value to rbx
+        mov rcx, r8     ; Put shift amount in RCX (CL = low byte)
+
+        ; shr.r64 uses CL implicitly
+        shr rbx
+
+        and rbx, 0xF
+
+        ; Convert to ASCII
+        cmp rbx, 9
+        jika_diatas
+            add rbx, 55     ; 'A' - 10
+        lainnya
+            add rbx, 48     ; '0'
+        tutup_jika
+
+        ; Print char
+        push rdi
+        push r8
+        push rbx
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 1
+        mov rax, 1
+        syscall
+        pop rbx
+        pop r8
+        pop rdi
+
+        sub r8, 4
+
+        ; Check for underflow (r8 went negative/wrapped)
+        cmp r8, 64
+        jika_diatas
+            henti
+        tutup_jika
+    tutup_loop
+
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; UTILITY: Print Byte Hex (2 digits)
+; ============================================================================
+
+fungsi signal_print_byte_hex
+    ; Input: rdi = byte value (0-255)
+
+    push rbx
+    push rcx
+
+    ; High nibble
+    mov rbx, rdi
+    shr rbx, 4
+    and rbx, 0xF
+    cmp rbx, 9
+    jika_diatas
+        add rbx, 55
+    lainnya
+        add rbx, 48
+    tutup_jika
+    push rbx
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rbx
+
+    ; Restore original value
+    pop rcx
+    pop rbx
+    push rbx
+    push rcx
+
+    ; Low nibble
+    mov rbx, rdi
+    and rbx, 0xF
+    cmp rbx, 9
+    jika_diatas
+        add rbx, 55
+    lainnya
+        add rbx, 48
+    tutup_jika
+    push rbx
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rbx
+
+    pop rcx
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; UTILITY: Print Decimal Number
+; ============================================================================
+
+fungsi signal_print_num
+    ; Input: rdi = number
+    ; Simple decimal print
+
+    push rbx
+    push rcx
+    push rdx
+
+    mov rax, rdi
+    mov rbx, 10
+    mov rcx, 0
+
+    ; Push digits
+    loop sig_num_push
+        mov rdx, 0
+        div rbx
+        add rdx, 48
+        push rdx
+        inc rcx
+
+        cmp rax, 0
+        jika_sama
+            henti
+        tutup_jika
+    tutup_loop
+
+    ; Pop and print
+    loop sig_num_print
+        pop rax
+        push rcx
+        push rax
+        mov rdi, 2
+        mov rsi, rsp
+        mov rdx, 1
+        mov rax, 1
+        syscall
+        pop rax
+        pop rcx
+
+        dec rcx
+        cmp rcx, 0
+        jika_sama
+            henti
+        tutup_jika
+    tutup_loop
+
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+tutup_fungsi
+
+; ============================================================================
+; UTILITY: Print Newline
+; ============================================================================
+
+fungsi signal_print_nl
+    mov rax, 0x0A
+    push rax
+    mov rdi, 2
+    mov rsi, rsp
+    mov rdx, 1
+    mov rax, 1
+    syscall
+    pop rax
+    ret
+tutup_fungsi
+
+; ============================================================================
+; INSTALLER: Setup Signal Handlers
+; ============================================================================
+
+fungsi signal_install_handlers
+    ; Install handlers for common crash signals
+    ; This should be called early in boot.fox
+
+    push rbx
+    push r12
+
+    ; Allocate KSigAction struct (152 bytes)
+    mov rdi, 160
+    call MorphLib_mem_alloc
+    mov r12, rax        ; r12 = sigaction struct
+
+    ; Setup struct:
+    ; sa_handler = morph_signal_handler
+    mov rax, MorphLib_morph_signal_handler
+    mov [r12], rax
+
+    ; sa_flags = SA_SIGINFO | SA_RESTORER
+    mov rbx, r12
+    add rbx, 8
+    mov rax, MorphLib_SA_SIGINFO
+    or rax, MorphLib_SA_RESTORER
+    mov [rbx], rax
+
+    ; sa_restorer = signal_restorer
+    add rbx, 8
+    mov rax, MorphLib_signal_restorer
+    mov [rbx], rax
+
+    ; sa_mask = 0 (don't block signals during handler)
+    ; Already zeroed by mem_alloc
+
+    ; Install for SIGSEGV
+    mov rdi, MorphLib_SIGSEGV
+    mov rsi, r12
+    mov rdx, 0          ; oldact = NULL
+    mov r10, 8          ; sigsetsize
+    mov rax, 13         ; sys_rt_sigaction
+    syscall
+
+    ; Install for SIGFPE
+    mov rdi, MorphLib_SIGFPE
+    mov rsi, r12
+    mov rdx, 0
+    mov r10, 8
+    mov rax, 13
+    syscall
+
+    ; Install for SIGILL
+    mov rdi, MorphLib_SIGILL
+    mov rsi, r12
+    mov rdx, 0
+    mov r10, 8
+    mov rax, 13
+    syscall
+
+    ; Install for SIGBUS
+    mov rdi, MorphLib_SIGBUS
+    mov rsi, r12
+    mov rdx, 0
+    mov r10, 8
+    mov rax, 13
+    syscall
+
+    ; Install for SIGABRT
+    mov rdi, MorphLib_SIGABRT
+    mov rsi, r12
+    mov rdx, 0
+    mov r10, 8
+    mov rax, 13
+    syscall
+
+    ; Mark as installed
+    mov rax, 1
+    mov rbx, MorphLib_signal_handler_installed
+    mov [rbx], rax
+
+    pop r12
+    pop rbx
+    ret
+tutup_fungsi
