@@ -1,0 +1,96 @@
+VZOELFOX
+; Morph Bootstrap Compiler
+; Written in low-level ISA, compiles high-level syntax
+; Version: 0.1.0 - Minimal fungsi/tutup_fungsi support
+
+; Memory layout:
+; r15 = Heap pointer (initialized by heap_init)
+; r14 = Input buffer pointer
+; r13 = Input buffer size
+; r12 = Output buffer pointer
+
+; Entry point
+main:
+    ; Initialize heap (we'll allocate buffers)
+    nop
+    ; For now, use stack-based buffers
+
+    ; Read input file
+    ; TODO: get filename from argv
+    ; For now, hardcode test
+
+    ; Main compiler loop
+    ; 1. Tokenize
+    ; 2. Parse
+    ; 3. Generate
+
+    ; Placeholder: just copy input to output with label transformation
+    ; fungsi main → main:
+    ; tutup_fungsi → ret
+
+    ; Exit
+    ret
+
+; Lexer functions
+lexer_init:
+    ; Initialize lexer state
+    ; Input: rdi = buffer ptr, rsi = buffer size
+    ret
+
+lexer_next_token:
+    ; Get next token
+    ; Output: rax = token type, rbx = token ptr, rcx = token len
+    ret
+
+lexer_skip_whitespace:
+    ; Skip whitespace characters
+    ret
+
+; Parser functions
+parser_init:
+    ; Initialize parser state
+    ret
+
+parser_function:
+    ; Parse function definition
+    ; fungsi <name> → <name>:
+    ret
+
+parser_end_function:
+    ; Parse function end
+    ; tutup_fungsi → ret
+    ret
+
+; Codegen functions
+codegen_init:
+    ; Initialize code generator
+    ret
+
+codegen_emit_label:
+    ; Emit label
+    ; Input: rdi = label name ptr, rsi = label name len
+    ret
+
+codegen_emit_instruction:
+    ; Emit instruction (pass-through)
+    ; Input: rdi = instruction ptr, rsi = instruction len
+    ret
+
+; Helper functions
+string_equals:
+    ; Compare strings
+    ; Input: rdi = str1, rsi = str2, rdx = len
+    ; Output: rax = 1 if equal, 0 if not
+    ret
+
+file_read:
+    ; Read file into buffer
+    ; Input: rdi = filename, rsi = buffer, rdx = max size
+    ; Output: rax = bytes read
+    ret
+
+file_write:
+    ; Write buffer to file
+    ; Input: rdi = filename, rsi = buffer, rdx = size
+    ; Output: rax = bytes written
+    ret
