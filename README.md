@@ -1,41 +1,45 @@
 # ABImorph - Morph ABI Specification & Binary Distribution
 
-**Version:** 2.0.0-bootstrap
+**Version:** 3.1.0-control-flow
 **Release Date:** 2026-01-23
-**Status:** BOOTSTRAP READY 🚀
+**Status:** CONTROL FLOW READY 🚀
 
 Official ABI specification, binary distribution, and standard library for the Morph programming ecosystem.
 
 ---
 
-## 🎉 NEW in v2.0.0: WORKING COMPILER!
+## 🎉 NEW in v3.1.0: CONTROL FLOW!
 
-### ✅ **Major Breakthroughs**
+### ✅ **Major Features**
 
-**v2.0.0 now supports**:
-- ✅ **Full operand encoding** - Registers, immediates, memory addressing!
+**v3.1.0 now supports**:
+- ✅ **Control Flow** - JMP, CALL, JE (conditional jumps)!
+- ✅ **Labels** - Forward and backward references with fixup system
+- ✅ **Function Calls** - CALL/RET for modular code
+- ✅ **Comparisons** - CMP instruction with conditional jumps
+- ✅ **Full operand encoding** - Registers, immediates, memory addressing
 - ✅ **Register operations** - All GPRs (rax-r15) with proper REX encoding
 - ✅ **Immediate values** - Decimal (42) and hexadecimal (0xFF) with auto-sizing
 - ✅ **Memory addressing** - Load from memory: `mov rax, [rbx+8]`
 - ✅ **Extended registers** - r8-r15 fully supported
-- ✅ **Bug fixes** - No more segfaults, stable compilation
 
-**What this means:** Generated code **WORKS**! Programs compile and execute correctly.
+**What this means:** You can now write complex parsers and compilers with proper control flow!
 
-**See:** [CHANGELOG v2.0](docs/CHANGELOG_v2.0.md) for complete details.
+**See:** [ISA_SPEC_v3.0.md](ISA_SPEC_v3.0.md) for complete instruction reference.
 
-**Status:** Ready for bootstrap self-hosting
+**Status:** Ready for parser implementation 🚀
 
 ---
 
 ## Overview
 
 ABImorph provides:
-- **Binary Distribution** - Ready-to-use `morph` compiler (v2.0.0)
+- **Binary Distribution** - Ready-to-use `morph` compiler (v3.1.0, 48KB)
+- **Control Flow** - JMP, CALL, JE with label support
 - **Full Operand Encoding** - Registers, immediates, memory addressing
 - **ABI Specification** - Complete calling convention and binary format
-- **ISA Reference** - Full instruction set architecture documentation
-- **Symbol Table & Fixups** - Label support infrastructure
+- **ISA Reference** - Full instruction set architecture documentation (ISA_SPEC_v3.0.md)
+- **Symbol Table & Fixups** - Forward/backward reference support
 - **Documentation** - Complete guides for development
 
 ## Quick Start

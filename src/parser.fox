@@ -1,0 +1,105 @@
+VZOELFOX
+
+jmp main
+
+str_vzoelfox db "VZOELFOX", 10, 0
+str_fungsi db "fungsi", 0
+str_tutup_fungsi db "tutup_fungsi", 0
+str_kembali db "kembali", 0
+str_panggil db "panggil", 0
+str_ret db "ret", 10, 0
+str_call db "call ", 0
+str_newline db 10, 0
+str_colon db ":", 10, 0
+str_space db " ", 0
+
+str_runtime_keluar db "runtime.keluar", 0
+str_runtime_exit_seq db "mov rdi ", 0
+str_runtime_exit_seq2 db "mov rax 60", 10, "syscall", 10, 0
+
+str_memory_alokasi db "memory.alokasi", 0
+str_memory_mmap_1 db "mov rdi 0", 10, "mov rsi ", 0
+str_memory_mmap_2 db "mov rdx 3", 10, "mov r10 34", 10, "mov r8 -1", 10, "mov r9 0", 10, "mov rax 9", 10, "syscall", 10, 0
+
+test_input db "VZOELFOX", 10
+test_input2 db "fungsi test", 10
+test_input3 db "mov rax 42", 10
+test_input4 db "kembali rax", 10
+test_input5 db "tutup_fungsi", 10, 0
+
+print_str:
+    mov rax 1
+    mov rdi 1
+    syscall
+    ret
+
+print_char:
+    mov rax 1
+    mov rdi 1
+    mov rsi r15
+    mov rdx 1
+    syscall
+    ret
+
+strcmp:
+    ret
+
+parse_fungsi:
+    ret
+
+parse_tutup_fungsi:
+    ret
+
+parse_kembali:
+    ret
+
+parse_panggil:
+    ret
+
+parse_runtime_keluar:
+    ret
+
+parse_memory_alokasi:
+    ret
+
+emit_label:
+    ret
+
+emit_instruction:
+    ret
+
+emit_ret:
+    ret
+
+emit_call:
+    ret
+
+tokenize:
+    ret
+
+parse:
+    ret
+
+codegen:
+    ret
+
+main:
+    mov r15 str_vzoelfox
+    mov rdx 10
+    call print_str
+
+    mov r15 test_input2
+    mov rdx 12
+    call print_str
+
+    mov r15 test_input3
+    mov rdx 11
+    call print_str
+
+    mov r15 str_ret
+    mov rdx 4
+    call print_str
+
+    mov rax 60
+    mov rdi 0
+    syscall

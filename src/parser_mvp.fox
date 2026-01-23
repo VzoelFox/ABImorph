@@ -1,0 +1,62 @@
+VZOELFOX
+
+jmp main
+
+setup_memory:
+    mov rdi 0
+    mov rsi 65536
+    mov rdx 3
+    mov r10 34
+    mov r8 -1
+    mov r9 0
+    mov rax 9
+    syscall
+    mov r12 rax
+    ret
+
+read_stdin:
+    mov rax 0
+    mov rdi 0
+    mov rsi r12
+    mov rdx 4096
+    syscall
+    mov r13 rax
+    ret
+
+write_stdout:
+    mov rax 1
+    mov rdi 1
+    mov rsi r12
+    mov rdx r13
+    syscall
+    ret
+
+process_byte:
+    ret
+
+scan_token:
+    ret
+
+check_fungsi:
+    ret
+
+check_tutup:
+    ret
+
+check_kembali:
+    ret
+
+emit_label:
+    ret
+
+emit_ret:
+    ret
+
+main:
+    call setup_memory
+    call read_stdin
+    call write_stdout
+
+    mov rax 60
+    mov rdi 0
+    syscall

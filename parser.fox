@@ -1,0 +1,7 @@
+VZOELFOX
+mov rax 0x600000
+mov rbx 0x700000
+mov rcx 0x800000
+mov rax 60
+mov rdi 0
+syscall
